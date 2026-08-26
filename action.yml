@@ -1,0 +1,83 @@
+name: SproutOS Migrate
+description: Run a database migration on SproutOS, and wait for it.
+author: SproutOS
+
+branding:
+  icon: database
+  color: green
+
+inputs:
+  project:
+    description: |
+      Which SproutOS project's database to migrate.
+
+      Required when the repository holds more than one project — the platform refuses to guess, and
+      says which candidates it saw. Defaults to the repository name.
+    required: false
+  directory:
+    description: |
+      The *built* migrator: a directory whose entry point the handler names.
+
+      Not source. This action uploads what is here and Lambda runs it, so a directory of TypeScript
+      produces a migrator that cannot load.
+    required: true
+  handler:
+    description: The migrator's entry point. Defaults to index.handler.
+    required: false
+    default: index.handler
+  runtime:
+    description: The Lambda runtime to run it on. Defaults to the platform's.
+    required: false
+  api-url:
+    description: The SproutOS API.
+    required: false
+    default: https://api.sproutos.me
+  token:
+    description: |
+      A deploy token, if you already hold one.
+
+      Normally left unset: the action exchanges a GitHub OIDC token for a short-lived one scoped to
+      this repository, so nothing is stored in your repository.
+    required: false
+
+outputs:
+  output:
+    description: What the migrator printed.
+    value: ${{ steps.migrate.outputs.output }}
+
+runs:
+  using: composite
+  steps:
+    - name: Authenticate
+      id: auth
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api-url }}
+        SUPPLIED_TOKEN: ${{ inputs.token }}
+        # Provided by GitHub when the workflow requests `id-token: write`. An action cannot request
+        # that permission for its caller — a workflow grants its own — so the failure when it is
+        # missing has to name the fix.
+        ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+        PROJECT: ${{ inputs.project || github.event.repository.name }}
+      run: ${{ github.action_path }}/scripts/authenticate.sh
+
+    - name: Package the migrator
+      id: package
+      shell: bash
+      env:
+        DIRECTORY: ${{ inputs.directory }}
+      run: ${{ github.action_path }}/scripts/package.sh
+
+    - name: Upload and migrate
+      id: migrate
+      shell: bash
+      env:
+        API_URL: ${{ inputs.api-url }}
+        SPROUTOS_TOKEN: ${{ steps.auth.outputs.token }}
+        ARCHIVE: ${{ steps.package.outputs.archive }}
+        DIGEST: ${{ steps.package.outputs.digest }}
+        PROJECT: ${{ inputs.project || github.event.repository.name }}
+        HANDLER: ${{ inputs.handler }}
+        RUNTIME: ${{ inputs.runtime }}
+      run: ${{ github.action_path }}/scripts/migrate.sh
