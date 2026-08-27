@@ -1,0 +1,54 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck
+        run: shellcheck scripts/*.sh tests/*.sh
+
+      - name: Migration action contract
+        run: tests/migrate-contract.sh
+
+      - name: Start mock SproutOS API
+        run: |
+          python3 tests/mock-api.py > "$RUNNER_TEMP/mock-api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/mock-api.pid"
+          for _ in {1..50}; do
+            curl -sf http://127.0.0.1:18765/health >/dev/null && exit 0
+            sleep 0.1
+          done
+          cat "$RUNNER_TEMP/mock-api.log"
+          exit 1
+
+      - name: Create built migrator fixture
+        run: |
+          mkdir -p "$RUNNER_TEMP/built-migrator"
+          printf 'export async function handler() {}\n' > "$RUNNER_TEMP/built-migrator/index.mjs"
+
+      - name: Run the composite action independently
+        id: migrate
+        uses: ./
+        with:
+          api-url: http://127.0.0.1:18765
+          token: test-token
+          project: test-project
+          directory: ${{ runner.temp }}/built-migrator
+
+      - name: Verify action output and request count
+        env:
+          MIGRATION_OUTPUT: ${{ steps.migrate.outputs.output }}
+        run: |
+          test "$MIGRATION_OUTPUT" = "migration complete"
+          test "$(grep -c '^migrate$' "$RUNNER_TEMP/mock-api.requests")" = 1
+

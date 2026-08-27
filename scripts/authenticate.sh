@@ -27,7 +27,7 @@ fi
 # The audience binds the token to SproutOS. Without it GitHub issues one for the repository owner's
 # default audience, which any service could accept — the claim we rely on is that this token was
 # minted *for us*.
-oidc=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+oidc=$(curl -sSf --retry 0 -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sproutos" | python3 -c 'import sys,json;print(json.load(sys.stdin)["value"])')
 
 # The project travels with the exchange, not just with the release.
@@ -50,7 +50,7 @@ print(json.dumps(body))
 # `curl -f` throws the response body away on an error status, which is exactly the body worth
 # reading here: an ambiguous repository lists its candidate projects, and naming a group says so by
 # name. With `-f` the customer gets `exit 22` and nothing to act on.
-response=$(curl -sS -w '\n%{http_code}' -X POST "${API_URL}/v1/deploy/token" \
+response=$(curl -sS --retry 0 -w '\n%{http_code}' -X POST "${API_URL}/v1/deploy/token" \
   -H 'Content-Type: application/json' -d "$payload")
 status=$(printf '%s' "$response" | tail -n1)
 body=$(printf '%s' "$response" | sed '$d')
