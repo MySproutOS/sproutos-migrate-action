@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Shellcheck
         run: shellcheck scripts/*.sh tests/*.sh
@@ -51,4 +51,3 @@ jobs:
         run: |
           test "$MIGRATION_OUTPUT" = "migration complete"
           test "$(grep -c '^migrate$' "$RUNNER_TEMP/mock-api.requests")" = 1
-
