@@ -6,13 +6,40 @@ set -euo pipefail
 # One place that calls the API and says what happened when it goes wrong. `curl -sSf` prints a bare
 # status code and discards the body, and the body is where the platform explains itself.
 api() {
-  local url="$1" payload="$2"
-  local out status response
-  out=$(curl -sS -X POST "$url" \
-    -H "Authorization: Bearer ${SPROUTOS_TOKEN}" \
-    -H 'Content-Type: application/json' \
-    -d "$payload" \
-    -w '\n%{http_code}')
+  local url="$1" payload="$2" max_time="${3:-}"
+  local out curl_status status response
+
+  # `--retry 0` is redundant with curl's default and deliberately explicit. This endpoint invokes
+  # a migration synchronously: after a broken connection there is no safe way to know whether the
+  # schema change ran, so a transport retry could execute a partially applied migration twice.
+  set +e
+  if [ -n "$max_time" ]; then
+    out=$(curl -sS --retry 0 --max-time "$max_time" -X POST "$url" \
+      -H "Authorization: Bearer ${SPROUTOS_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      -d "$payload" \
+      -w '\n%{http_code}')
+  else
+    out=$(curl -sS --retry 0 -X POST "$url" \
+      -H "Authorization: Bearer ${SPROUTOS_TOKEN}" \
+      -H 'Content-Type: application/json' \
+      -d "$payload" \
+      -w '\n%{http_code}')
+  fi
+  curl_status=$?
+  set -e
+
+  if [ "$curl_status" -ne 0 ]; then
+    if [ "$curl_status" -eq 28 ] && [ "$max_time" = "900" ]; then
+      echo "::error::The migration exceeded the 15-minute limit. Its final state may be partial;" >&2
+      echo "::error::SproutOS did not retry it, and this action will not retry it." >&2
+    else
+      echo "::error::POST ${url} failed before a response was received (curl ${curl_status})." >&2
+      echo "::error::The request was attempted once and was not retried." >&2
+    fi
+    return "$curl_status"
+  fi
+
   status=$(printf '%s' "$out" | tail -n1)
   response=$(printf '%s' "$out" | sed '$d')
   if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
@@ -29,7 +56,8 @@ upload=$(api "${API_URL}/v1/deploy/upload-url" \
 url=$(echo "$upload" | python3 -c 'import sys,json;print(json.load(sys.stdin)["url"])')
 key=$(echo "$upload" | python3 -c 'import sys,json;print(json.load(sys.stdin)["key"])')
 
-curl -sSf -X PUT "$url" --upload-file "$ARCHIVE" -H 'Content-Type: application/zip' > /dev/null
+curl -sSf --retry 0 -X PUT "$url" --upload-file "$ARCHIVE" \
+  -H 'Content-Type: application/zip' > /dev/null
 echo "uploaded"
 
 body=$(MIGRATION_KEY="$key" python3 -c '
@@ -44,7 +72,9 @@ for name, field in (("HANDLER", "migration_handler"), ("RUNTIME", "runtime")):
 print(json.dumps(body))
 ')
 
-result=$(api "${API_URL}/v1/deploy/migrate" "$body")
+# This is the only long-running request. Lambda cannot run beyond 900 seconds, and bounding the
+# client too makes the action's contract independent of a runner's or proxy's default timeout.
+result=$(api "${API_URL}/v1/deploy/migrate" "$body" 900)
 
 ok=$(echo "$result" | python3 -c 'import sys,json;print(json.load(sys.stdin)["ok"])')
 output=$(echo "$result" | python3 -c 'import sys,json;print(json.load(sys.stdin)["output"])')

@@ -35,12 +35,15 @@ endpoint that accepted a database URL would let anyone holding a deploy token po
 migrator at a database they chose. Provision the database on SproutOS and it arrives as
 `DATABASE_URL`.
 
-**Fifteen minutes is the ceiling**, because that is Lambda's. A migration that needs longer needs a
-different tool, and discovering that mid-migration is the worst possible moment — so it is stated
-here rather than found there.
+**Fifteen minutes is the ceiling**, because that is Lambda's. The action gives the synchronous
+migration request exactly 900 seconds; packaging and upload happen before that clock starts. A
+migration that needs longer needs a different tool, and discovering that mid-migration is the worst
+possible moment — so it is stated here rather than found there.
 
-**Nothing is retried.** Re-running a partially applied schema change is how a recoverable failure
-becomes an unrecoverable one. Your migrator owns idempotency; this reports what it reported.
+**Nothing is retried.** Every action request is explicitly single-attempt, including transport
+failures and timeouts. Re-running a partially applied schema change is how a recoverable failure
+becomes an unrecoverable one. Your migrator owns idempotency; this reports what it reported. If a
+request loses its response, inspect the database before starting a new workflow run.
 
 ## `directory` must be built
 
